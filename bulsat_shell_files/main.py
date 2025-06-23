@@ -62,6 +62,7 @@ def main():
     app_version_cfg = cfg.get('app_version') # Will be used by bsc.py
     base_url = cfg.get('base_url', 'https://api.iptv.bulsat.com')
     android_friendly_name = cfg.get('android_friendly_name', 'DefaultAndroidDevice')
+    enable_catchup_config = cfg.getboolean('enable_catchup', True)
 
 
     if username == 'your_username' or password == 'your_password':
@@ -150,7 +151,8 @@ def main():
             logos_path='', # Not exposing this
             use_local_logos=False, # Not exposing this
             logos_local_path='', # Not exposing this
-            android_device_name=android_friendly_name # For password encryption if os_id is androidtv
+            android_device_name=android_friendly_name, # For password encryption if os_id is androidtv
+            enable_catchup_info=enable_catchup_config # New parameter for catchup
         )
 
         while True:

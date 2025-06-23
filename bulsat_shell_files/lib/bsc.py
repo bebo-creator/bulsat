@@ -45,7 +45,8 @@ class dodat():
                 logos_path = '', # Път до външни лога
                 use_local_logos=False, # Използване на локални лога от указан път
                 logos_local_path='', # Път до локални лога
-                android_device_name='DefaultAndroidDeviceName' # Нов параметър за androidtv парола
+                android_device_name='DefaultAndroidDeviceName', # Нов параметър за androidtv парола
+                enable_catchup_info=True # Нова опция за контролиране на catchup информацията
                 ):
 
     # Определяне на Host от базовия URL адрес за self.__UA
@@ -102,6 +103,7 @@ class dodat():
     self.use_local_logos = use_local_logos
     self.logos_local_path = logos_local_path
     self.android_device_name = android_device_name # За криптиране на парола за Android TV
+    self.__enable_catchup_info = enable_catchup_info # Запазване на новата опция
 
     self.__s = requests.Session()
 
@@ -514,26 +516,176 @@ class dodat():
           continue # Пропускане на този канал
 
         if self.__gen_m3u:
-          catchup_attributes = ''
-          # Добавяне на catchup информация, ако е налична и use_rec е True
-          if self.__use_rec and 'ndvr' in ch_info and ch_info['ndvr']:
-            # Внимателно форматиране на URL за catchup
-            # Пример: catchup="default" catchup-source="URL_FORMAT"
-            # URL_FORMAT трябва да съдържа плейсхолдъри като {utc:YmdHMS} и {duration}
-            # Оригинал: recURL + ch['ndvr'][ch['ndvr'].index(':',10):] + '&wowzadvrplayliststart={utc:YmdHMS}&wowzadvrplaylistduration={duration}000&request_time=' + str(round(time.time() * 1000)) + 'token=38264607382'
-            # Токенът и request_time може да са динамични и да изискват специално третиране.
-            # Засега ще използваме по-прост формат или ще пропуснем, ако е твърде сложно без Kodi контекст.
-            # Пропускаме KODIPROP редовете.
-            # catchup_attributes = f'catchup="default" catchup-source="{recURL}{ch_info["ndvr"].split(":", 2)[-1]}&wowzadvrplayliststart={{utc:YmdHMS}}&wowzadvrplaylistduration={{duration}}000"'
-            # Горното е пример, може да се нуждае от корекция спрямо изискванията на плейъра.
-            # Засега, по-безопасно е да се пропусне сложния catchup URL, ако не е ясно как да се формира правилно.
-            # Засега, ще добавим само основното име на канала.
-            extinf_title = ch_info.get('title', 'No Title')
-          else:
-            extinf_title = ch_info.get('title', 'No Title')
+          extinf_title_parts = [ch_info.get('title', 'No Title')]
+          catchup_tags = ''
+
+          # Добавяне на catchup информация, ако е налична и use_rec е True и новата опция е активна
+          if self.__enable_catchup_info and self.__use_rec and 'ndvr' in ch_info and ch_info['ndvr']:
+            # Формиране на catchup-source URL. Токенът и request_time може да се нуждаят от актуализация или да са специфични за сесия.
+            # Използваме структурата от оригиналния exec.py, но без KODIPROP.
+            # ВАЖНО: Токенът '38264607382' е взет от оригиналния код. Ако е динамичен, това няма да работи дългосрочно.
+            # Засега го оставяме така, както е бил в оригиналния плъгин.
+            # ndvr_link_part = ch_info['ndvr'][ch_info['ndvr'].index(':',10):] if ':' in ch_info['ndvr'][10:] else ch_info['ndvr'] # По-безопасно извличане
+            # По-просто: ch_info['ndvr'] често е пълен URL, но понякога е само част.
+            # recURL = 'http://lb-ndvr.iptv.bulsat.com'
+            # Пример за ndvr от логове: /live/hls/... или пълен URL.
+            # Ако ch_info['ndvr'] е относителен път:
+            # catchup_source_url = f"{recURL}{ndvr_link_part}&wowzadvrplayliststart={{utc:YmdHMS}}&wowzadvrplaylistduration={{duration}}000&request_time={str(round(time.time() * 1000))}token=38264607382"
+            # Ако ch_info['ndvr'] е пълен URL:
+            # catchup_source_url = f"{ch_info['ndvr']}&wowzadvrplayliststart={{utc:YmdHMS}}&wowzadvrplaylistduration={{duration}}000&request_time={str(round(time.time() * 1000))}token=38264607382"
+            # Засега ще приемем, че ch_info['ndvr'] е основният URL за catchup и ще добавим параметрите.
+            # Това е най-близко до оригиналната логика без Kodi.
+
+            # По-безопасен подход към ndvr_link_part, ако ch_info['ndvr'] съдържа ':' преди 10-ти символ
+            start_index = ch_info['ndvr'].find(':', 10)
+            if start_index == -1: # Ако ':' не е намерен след 10-тия символ, може би е пълен URL или различна структура
+                # В този случай, може да не искаме да използваме recURL или да имаме различна логика
+                # Засега, ако не намерим ':', ще използваме ndvr както е, ако изглежда като URL
+                if "://" in ch_info['ndvr']:
+                    base_catchup_url = ch_info['ndvr']
+                else: # Ако не е пълен URL и няма ':' след 10-ти символ, може да е само ID или относителен път
+                    base_catchup_url = recURL + (ch_info['ndvr'] if ch_info['ndvr'].startswith('/') else '/' + ch_info['ndvr'])
+            else:
+                ndvr_link_part = ch_info['ndvr'][start_index:] # Вземане на частта след IP:PORT
+                base_catchup_url = recURL + ndvr_link_part
+
+            # Добавяне на параметри за Wowza DVR
+            # ВАЖНО: {utc:YYYYMMDDHHmmss} и {durationSeconds} са примери за плейсхолдъри, които IPTV Simple Client поддържа.
+            # Оригиналният код използва {utc:YmdHMS} и {duration}000. Ще се придържаме към оригиналните плейсхолдъри.
+            catchup_source_url = f"{base_catchup_url}" # Основният URL
+            # Параметрите ще се добавят от IPTV клиента, ако той поддържа такъв формат за catchup-source.
+            # IPTV Simple Client очаква URL с плейсхолдъри.
+            # Пример: catchup-source="http://example.com/playlist.m3u8?utc={utc}&lutc={lutc}&offset={offset}&duration={duration}"
+            # Оригиналните параметри са: &wowzadvrplayliststart={utc:YmdHMS}&wowzadvrplaylistduration={duration}000&request_time=...token=...
+            # Тези параметри са специфични за Wowza и може да не се интерпретират правилно от всички клиенти директно в catchup-source.
+            # По-стандартно е да се използват плейсхолдъри, които клиентът замества.
+            # Засега ще запазя оригиналната структура на параметрите, тъй като това е, което плъгинът е генерирал.
+            # Трябва да се има предвид, че request_time и token може да изтекат.
+
+            # Формиране на catchup атрибутите за M3U
+            # ВАЖНО: Използването на str(round(time.time() * 1000)) и фиксиран токен може да не е надеждно за дългосрочен catchup.
+            # Това е взето директно от оригиналния код.
+            # catchup_params = f"&wowzadvrplayliststart={{utc:YmdHMS}}&wowzadvrplaylistduration={{duration}}000&request_time={str(round(time.time() * 1000))}token=38264607382" # Този токен може да е проблем
+            # По-безопасно е да се предоставят само основните плейсхолдъри, ако клиентът ги поддържа.
+            # IPTV Simple Client поддържа: {utc} {lutc} {offset} {duration} {timestamp} {datetime} {utcdate} {utctime} {path} {filename} {extension}
+            # За Wowza DVR, плейсхолдърите са {wowzadvrplayliststart} и {wowzadvrplaylistduration} (или подобни).
+            # Оригиналът е: ch['ndvr'][ch['ndvr'].index(':',10):] + '&wowzadvrplayliststart={utc:YmdHMS}&wowzadvrplaylistduration={duration}000&request_time=' + str(round(time.time() * 1000)) + 'token=38264607382"'
+            # Нека се опитаме да го запазим максимално близо до оригинала, но да го направим по-стандартен M3U атрибут.
+
+            # Извличане на основния URL от ndvr, премахвайки query string ако има
+            ndvr_base_url = ch_info['ndvr'].split('?')[0]
+
+            # Формиране на catchup атрибута, който IPTV Simple Client би могъл да използва.
+            # Клиентът ще добави query параметрите.
+            # catchup_tags = f'catchup="default" catchup-days="7" catchup-source="{ndvr_base_url}?&wowzadvrplayliststart={{utc:YmdHMS}}&wowzadvrplaylistduration={{duration}}000&request_time={str(round(time.time() * 1000))}&token=38264607382"'
+            # Горният ред е твърде специфичен. По-добре е да се придържаме към стандартни плейсхолдъри, ако е възможно.
+            # Ако трябва да се запази оригиналната Wowza структура, тя трябва да е част от URL-а, който клиентът конструира.
+            # Засега, ще добавя само `catchup="default"` и ще разчитам, че URL-ът в `ch_info['ndvr']` е правилният за DVR.
+            # Ако `ch_info['ndvr']` вече съдържа плейсхолдъри или е базов URL за DVR, това може да е достатъчно.
+            # От преглед на оригиналния код, изглежда, че пълният URL с параметри (без плейсхолдъри) се генерира.
+            # Това не е стандартно за `catchup-source`.
+
+            # Връщане към по-прост подход: ако има ndvr, маркираме го. Конкретният URL за timeshift ще се вземе от stream_url.
+            # Атрибутът `catchup="default"` е достатъчен, за да каже на клиента, че има архив.
+            # Клиентът сам трябва да знае как да поиска архив от основния стрийм URL, ако той го поддържа.
+            # Ако обаче `ch_info['ndvr']` е специфичният URL за DVR (както изглежда), тогава той трябва да се използва като stream_url за catchup.
+            # Това е сложен момент. Оригиналният код добавяше KODIPROP тагове, които указваха на Kodi как да третира това.
+            # Без тях, трябва да се разчита на стандартни M3U тагове.
+
+            # Нека да използваме `ch_info['ndvr']` като основен URL за catchup потока,
+            # и да добавим стандартни плейсхолдъри, които IPTV Simple Client разбира.
+            # Това е компромис.
+            # Пример: catchup-source="[ndvr_url_без_плейсхолдъри_от_ch_info_ndvr]?wowzadvrplayliststart={utc:YYYYMMDDHHmmss}&wowzadvrplaylistduration={durationSeconds}"
+            # Ще се придържам към това, което е било генерирано като URL в оригиналния код, но ще го сложа в catchup-source.
+
+            # Взимане на частта след IP адреса и порта, ако има такива.
+            # Това е рисковано, ако структурата на URL се промени.
+            path_and_query = ch_info['ndvr']
+            if '://' in path_and_query:
+                path_and_query = '/' + '/'.join(path_and_query.split('/')[3:]) # Взема пътя след хоста
+
+            # Формиране на catchup-source URL с плейсхолдъри, които IPTV Simple Client би заместил
+            # Използваме recURL като база, както в оригиналния код
+            # Токенът и request_time се премахват, тъй като те трябва да се управляват от клиента или сървъра по време на заявката.
+            # Клиентът ще добави необходимите параметри за време.
+            formatted_ndvr_url = f"{recURL}{path_and_query}&wowzadvrplayliststart={{utc:YmdHMS}}&wowzadvrplaylistduration={{duration}}000"
+            # formatted_ndvr_url = f"{recURL}{path_and_query}" # По-просто, клиентът да добавя всичко
+
+            catchup_tags = f'catchup="default" catchup-source="{formatted_ndvr_url}"'
+            # extinf_title_parts.append("[Catchup]") # По желание, за индикация в името
 
           stream_url = ch_info.get('sources', '') # Основен URL на потока
-          if not stream_url and 'ndvr' in ch_info : # Fallback към ndvr ако sources липсва
+          if not stream_url and 'ndvr' in ch_info and self.__enable_catchup_info and self.__use_rec:
+              # Ако няма 'sources', но има 'ndvr' и catchup е активен, може би 'ndvr' е основният поток за гледане с DVR.
+              # Това е малко вероятно, обикновено 'sources' е за live, а 'ndvr' за архив.
+              # Ако 'sources' липсва, но 'ndvr' го има, ще използваме 'ndvr' като основен поток.
+              stream_url = ch_info.get('ndvr', '')
+          elif not stream_url:
+               stream_url = ch_info.get('ndvr', '') # Fallback ако sources липсва, без значение от catchup опцията
+
+          extinf_title = " ".join(extinf_title_parts)
+          if catchup_tags: # Добавяне на catchup таговете към EXTINF, ако са генерирани
+              m3u_line_start = f'#EXTINF:-1 {catchup_tags} '
+          else:
+              m3u_line_start = f'#EXTINF:-1 '
+
+          # Добавяне на останалите атрибути към m3u_line_start
+          # (tvg-id, tvg-logo, radio, group-title)
+          # и заглавието на канала.
+          # Това е малко объркано с extinf_title и extinf_title_parts. Ще го опростя.
+
+          current_title = ch_info.get('title', 'No Title')
+          tvg_id = ch_info.get('epg_name', '')
+          tvg_logo_val = ch_info.get('logo_selected', '') # Преименуване, за да не се бърка с променливата tvg_logo от по-рано
+
+          if self.use_ext_logos:
+              logo_filename = f"{tvg_id}.png"
+              if self.use_local_logos and self.logos_local_path:
+                  tvg_logo_val = os.path.join(self.logos_local_path, logo_filename)
+              elif self.logos_path:
+                  tvg_logo_val = urllib.parse.urljoin(self.logos_path, logo_filename)
+
+          if epg_map and tvg_id in epg_map: # epg_map е дефинирано по-горе
+              map_entry = epg_map[tvg_id]
+              tvg_id = map_entry.get('id', tvg_id)
+              if not self.use_ext_logos:
+                  tvg_logo_val = map_entry.get('ch_logo', tvg_logo_val)
+
+          m3u_playlist_content += f'{m3u_line_start}tvg-id="{tvg_id}" tvg-logo="{tvg_logo_val}" radio="{str(ch_info.get("radio", False)).lower()}" group-title="{group_title}",{current_title}\n'
+
+          if self.__use_ua and self.__UA.get('User-Agent'):
+            m3u_playlist_content += f'{stream_url}|User-Agent={urllib.parse.quote_plus(self.__UA["User-Agent"])}\n'
+          else:
+            m3u_playlist_content += f'{stream_url}\n'
+
+        # --- XMLTV EPG Channel and Programme Data ---
+        if self.__gen_epg and hasattr(xml_writer, 'addChannel'):
+          display_names = [(ch_info.get('title', 'N/A'), 'bg')] # Приемаме български по подразбиране
+
+          xml_writer.addChannel({
+              'display-name': display_names,
+              'id': ch_info.get('epg_name', str(i)), # Уникален ID за канала
+              'url': [ch_info.get('url', '')] # URL към уебсайта на канала, ако има
+          })
+
+          if 'program' in ch_info and ch_info['program']:
+            for prog_item in ch_info['program']:
+              prog_title = [(prog_item.get('title', 'N/A'), '')] # Езикът може да се остави празен
+              prog_desc = [(prog_item.get('desc', ''), '')]
+              prog_category = [(ch_info.get('genre', ''), '')]
+
+              xml_writer.addProgramme({
+                  'start': prog_item.get('start', ''),
+                  'stop': prog_item.get('stop', ''),
+                  'title': prog_title,
+                  'desc': prog_desc,
+                  'category': prog_category,
+                  'channel': ch_info.get('epg_name', str(i)) # ID на канала, към който принадлежи програмата
+              })
+
+      # --- Writing M3U file ---
+      if self.__gen_m3u:
+        m3u_file_path = os.path.join(self.__path, 'bulsat.m3u')
               stream_url = ch_info.get('ndvr', '')
 
 
