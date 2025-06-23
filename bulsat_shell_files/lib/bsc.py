@@ -12,7 +12,7 @@ import hashlib
 import re
 from Cryptodome.Cipher import AES
 import io
-import xmltv_p3 as xmltv # Уверете се, че този файл е достъпен
+from . import xmltv_p3 as xmltv # Използване на относителен импорт
 import html # За html.unescape
 
 recURL = 'http://lb-ndvr.iptv.bulsat.com'
