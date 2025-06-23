@@ -1,0 +1,155 @@
+# Kodi Media Center language file
+# Add-on Name: Fusion TV Android
+# Add-on id: plugin.program.bscfusion
+# Add-on provider: MartinStZ
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: Fusion TV Android\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2024-05-31 23:45+0200\n"
+"PO-Revision-Date: 2024-05-31 23:45+0200\n"
+"Last-Translator: fidyBG\n"
+"Language-Team: fidyBG\n"
+"Language: bg\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"X-Generator: Poedit 1.8.4\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+msgctxt "#30300"
+msgid "General"
+msgstr "Основни"
+
+msgctxt "#30301"
+msgid "User"
+msgstr "Потребител"
+
+msgctxt "#30302"
+msgid "Password"
+msgstr "Парола"
+
+msgctxt "#30303"
+msgid "Reload playlist (min)"
+msgstr "Обновяване на плейлист (в минути)"
+
+msgctxt "#30304"
+msgid "Time Out Http"
+msgstr "Време за http изчакване (в часове)"
+
+msgctxt "#30305"
+msgid "Base Url"
+msgstr "Основен URL адрес"
+
+msgctxt "#30306"
+msgid "Service check interval (min)"
+msgstr "Време за проверка"
+
+msgctxt "#30307"
+msgid "Attempts to generate a playlist"
+msgstr "Опити за генериране на плейлист"
+
+msgctxt "#30308"
+msgid "Input User/Password for login"
+msgstr "Вход с потребител и парола"
+
+msgctxt "#30309"
+msgid "Login data URL"
+msgstr "URL адрес към данни за вход"
+
+msgctxt "#30310"
+msgid "Use records"
+msgstr "Използвай записи"
+
+msgctxt "#30400"
+msgid "More"
+msgstr "ОЩЕ"
+
+msgctxt "#30401"
+msgid "Show adult content"
+msgstr "Покажи съдържание за възрастни"
+
+msgctxt "#30402"
+msgid "OS ID"
+msgstr "Платформа"
+
+msgctxt "#30403"
+msgid "App version"
+msgstr "Версия"
+
+msgctxt "#30404"
+msgid "Enable Debug"
+msgstr "Режим за отстраняване на грешки"
+
+msgctxt "#30405"
+msgid "Enable Copy"
+msgstr "Създаване на копие на плейлиста"
+
+msgctxt "#30406"
+msgid "File Path"
+msgstr "Папка, където да се копира плейлистът"
+
+msgctxt "#30407"
+msgid "Chanel Groups from EPG"
+msgstr "Групи на каналите от EPG"
+
+msgctxt "#30408"
+msgid "Custom commands enable"
+msgstr "Персонални команди"
+
+msgctxt "#30409"
+msgid "Builtin"
+msgstr "Builtin"
+
+msgctxt "#30410"
+msgid "Script"
+msgstr "Script"
+
+msgctxt "#30411"
+msgid "Add UA to stream"
+msgstr "Добави User-Agent в потока"
+
+msgctxt "#30412"
+msgid "Use external logos"
+msgstr "Използвай външни лога"
+
+msgctxt "#30413"
+msgid "URL to logos"
+msgstr "URL адрес до логата"
+
+msgctxt "#30414"
+msgid "Use local logos"
+msgstr "Използвай локални лога"
+
+msgctxt "#30415"
+msgid "Local path to logos"
+msgstr "Път до папката с локални лога"
+
+msgctxt "#30500"
+msgid "Pvr"
+msgstr "ПВР"
+
+msgctxt "#30501"
+msgid "Force Reload Pvr"
+msgstr "Принудително рестартиране на ПВР"
+
+msgctxt "#30502"
+msgid "Reload Pvr after update"
+msgstr "Рестартирай ПВР след обновяване на плейлиста"
+
+msgctxt "#30503"
+msgid "Use external EPG"
+msgstr "Използвай външно EPG"
+
+msgctxt "#30504"
+msgid "Url map data"
+msgstr "URL адрес за EPG"
+
+msgctxt "#105"
+msgid "Donate"
+msgstr "ДАРЕНИЕ"
+
+msgctxt "#106"
+msgid "[B]PayPal:    mar333bg@gmail.com[/B]"
+msgstr "[B]PayPal:    mar333bg@gmail.com[/B]"
