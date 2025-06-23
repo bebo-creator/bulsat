@@ -63,6 +63,8 @@ def main():
     base_url = cfg.get('base_url', 'https://api.iptv.bulsat.com')
     android_friendly_name = cfg.get('android_friendly_name', 'DefaultAndroidDevice')
     enable_catchup_config = cfg.getboolean('enable_catchup', True)
+    append_token_to_url_config = cfg.getboolean('append_token_to_stream_url', False)
+    token_param_name_config = cfg.get('stream_url_token_param_name', 'ssbulsatapi')
 
 
     if username == 'your_username' or password == 'your_password':
@@ -152,7 +154,9 @@ def main():
             use_local_logos=False, # Not exposing this
             logos_local_path='', # Not exposing this
             android_device_name=android_friendly_name, # For password encryption if os_id is androidtv
-            enable_catchup_info=enable_catchup_config # New parameter for catchup
+            enable_catchup_info=enable_catchup_config, # New parameter for catchup
+            append_token_to_url=append_token_to_url_config,
+            token_param_name=token_param_name_config
         )
 
         while True:
