@@ -9,7 +9,7 @@ import urllib.parse
 import simplejson as json
 import hashlib
 import re
-from Cryptodome.Cipher import AES # Ще оставим Cryptodome засега, ако не работи, ще мислим за pyaes
+from Cryptodome.Cipher import AES
 import io
 from . import xmltv_p3 as xmltv
 import html
@@ -22,22 +22,18 @@ class dodat():
                 base,
                 login,
                 path,
+                os_id, # Преместен по-напред, тъй като main.py винаги го подава
+                agent_id, # Подаван от main.py (десктоп UA за API заявки)
+                app_ver,  # Подаван от main.py ("0.01" за API заявки)
+                m3u_url_user_agent_string, # Подаван от main.py (UA за M3U URL-и)
                 cachetime=1,
                 dbg=False,
                 timeout=0.5,
-                ver = '0.0.0', # Версия на този скрипт
+                ver = '0.0.0',
                 xxx = False,
-                # Параметри, вдъхновени от docker-bulsatcom за API заявката:
-                os_id, # Това е стойността от config.ini (напр. "samsungtv", "androidtv", "pcweb")
-                       # Ще се използва за device_id, device_name, os_version, os_type в p_data
-                       # и за определяне на /tv/{os_id}/live ендпойнта.
-                agent_id, # Това е User-Agent за API заявките (подаден от main.py, напр. десктоп UA)
-                app_ver,  # Това е app_version за API заявките (подаден от main.py, напр. "0.01")
-
                 force_group_name = False,
-                use_ua = True, # Дали да се добавя User-Agent към M3U URL-ите
-                m3u_url_user_agent_string = '', # User-Agent стрингът, който да се добави към M3U URL-ите
-                use_rec = True, # Дали да се опитва да се генерира catchup инфо (зависи и от enable_catchup_info)
+                use_ua = True,
+                use_rec = True,
                 gen_m3u = True,
                 gen_epg = False,
                 compress = True,
@@ -47,9 +43,9 @@ class dodat():
                 logos_path = '',
                 use_local_logos=False,
                 logos_local_path='',
-                android_device_name='DefaultAndroidDeviceName', # Вече не се използва за device_id в този подход
+                android_device_name='DefaultAndroidDeviceName', # Игнориран в този подход
                 enable_catchup_info=True,
-                append_token_to_url=False, # Дали да се добавя ssbulsatapi към stream URL
+                append_token_to_url=False,
                 token_param_name='ssbulsatapi'
                 ):
 
@@ -59,18 +55,17 @@ class dodat():
     parsed_url = urllib.parse.urlparse(base)
     self.__host = parsed_url.netloc if parsed_url.netloc else 'api.iptv.bulsat.com'
 
-    self.__M3U_USER_AGENT_STRING = m3u_url_user_agent_string # User-Agent за M3U URL-ите
+    self.__M3U_USER_AGENT_STRING = m3u_url_user_agent_string
 
     self.__log_in = {}
     self.__p_data = {
                 'user' : [None, login['usr']],
-                # Използване на os_id от config.ini като стойност за тези полета, както прави docker-bulsatcom
                 'device_id' : [None, os_id],
                 'device_name' : [None, os_id],
-                'os_version' : [None, os_id], # Може да се наложи да е по-специфично, но docker-bulsatcom ползва os_id
+                'os_version' : [None, os_id],
                 'os_type' : [None, os_id],
-                'app_version' : [None, app_ver], # Трябва да е "0.01" според docker-bulsatcom
-                'pass' : [None,''], # Ще се попълни
+                'app_version' : [None, app_ver],
+                'pass' : [None,''],
                 }
     self.__log_dat(f"Първоначално p_data за API заявка: {self.__p_data}", force_log=True)
 
@@ -79,7 +74,7 @@ class dodat():
     self.__t = timeout; self.__BLOCK_SIZE = 16
     self.__use_ua_in_m3u_url = use_ua
     self.__use_rec_for_catchup = use_rec
-    self.__URL_EPG  = base + '/epg/long' # docker-bulsatcom ползва /epg/short, но ще оставим long за повече данни
+    self.__URL_EPG  = base + '/epg/long'
     self.__js = None
     self.__app_version_script = ver
     self.__x = xxx
@@ -91,25 +86,21 @@ class dodat():
     elif logos_path: self.logos_path = logos_path + '/'
     else: self.logos_path = ''
     self.use_local_logos = use_local_logos; self.logos_local_path = logos_local_path
+    self.android_device_name = android_device_name # Игнорира се, но се приема като параметър
     self.__enable_catchup_info = enable_catchup_info
     self.__append_token_to_url = append_token_to_url
     self.__token_param_name = token_param_name
 
     self.__s = requests.Session()
-    # User-Agent за HTTP заявките на сесията (подаден от main.py, вдъхновен от docker-bulsatcom)
-    self.__s.headers.update({'User-Agent': agent_id})
+    self.__s.headers.update({'User-Agent': agent_id}) # agent_id е десктоп UA за API заявки
     self.__log_dat(f"User-Agent на сесията е зададен на: {agent_id}", force_log=True)
 
-    # URL за логин - docker-bulsatcom има логика за ?auth
-    self.__URL_LOGIN = base + '/?auth' # Повечето случаи изискват ?auth
-    # Проверка дали os_id е "pcweb" (еквивалент на _os=0 в docker-bulsatcom)
-    if os_id.lower() == 'pcweb':
-        self.__URL_LOGIN = base + '/auth' # Без '?' за pcweb
+    self.__URL_LOGIN = base + '/?auth'
+    if os_id.lower() == 'pcweb': # Само за pcweb се използва /auth без ?
+        self.__URL_LOGIN = base + '/auth'
 
-    # URL за списък с канали, зависи от os_id
-    self.__URL_LIST = base + '/tv/' + os_id + '/live'
+    self.__URL_LIST = base + '/tv/' + os_id + '/live' # os_id от config
     self.__log_dat(f"URL за списък с канали: {self.__URL_LIST}", force_log=True)
-
 
     if not os.path.exists(self.__path):
       try: os.makedirs(self.__path)
@@ -136,7 +127,7 @@ class dodat():
           temp_dict = dict(d)
           try: print(json.dumps(temp_dict, indent=2, ensure_ascii=False))
           except Exception as e_inner:
-            print(f"Fallback log for dict (json.dumps failed): {e_inner}")
+            print(f"Fallback log for dict (json.dumps failed): {e_inner}") # Коригирано
             for k, v in temp_dict.items(): print (f"  {str(k)} : {str(v)}")
     elif isinstance(d, list):
       for i, l_item in enumerate(d): print (f"  [{i}]: {l_item}")
@@ -176,16 +167,14 @@ class dodat():
       self.__log_in['key'] = r.headers['challenge']; self.__log_in['session'] = r.headers['ssbulsatapi']
       self.__s.headers.update({'SSBULSATAPI': self.__log_in['session']})
 
-      # Криптиране на паролата ВИНАГИ с challenge ключа (както docker-bulsatcom)
+      # Криптиране на паролата ВИНАГИ с challenge ключа
       _text_pass = self.__log_in['pw'] + (self.__BLOCK_SIZE - len(self.__log_in['pw']) % self.__BLOCK_SIZE) * '\0'
-      aes_key_pass = self.__log_in['key'].encode("utf8") # Използваме challenge ключа
+      aes_key_pass = self.__log_in['key'].encode("utf8")
       enc_pass = AES.new(aes_key_pass, AES.MODE_ECB)
       self.__p_data['pass'][1] = base64.b64encode(enc_pass.encrypt(_text_pass.encode("utf8"))).decode('utf-8')
 
-      # device_id вече е зададен в __init__ на базата на os_id от config (напр. "samsungtv")
-      # app_version вече е зададен в __init__ на базата на app_ver от config (напр. "0.01")
-      self.__log_dat(f"Използван device_id за API заявка: {self.__p_data['device_id'][1]}", force_log=True)
-      self.__log_dat(f"Използван app_version за API заявка: {self.__p_data['app_version'][1]}", force_log=True)
+      self.__log_dat(f"Използван device_id за API заявка: {self.__p_data['device_id'][1]} (от os_id)", force_log=True)
+      self.__log_dat(f"Използван app_version за API заявка: {self.__p_data['app_version'][1]} (0.01)", force_log=True)
 
       self.__log_dat({"Login Data Sent to API": self.__p_data})
       if self.__cb: self.__cb({'pr': 30, 'str': 'Изпращане на данни за вход...'})
@@ -195,8 +184,7 @@ class dodat():
       if login_response_data.get('Logged') == 'true':
         self.__log_dat('Входът е успешен.', force_log=True)
         if self.__cb: self.__cb({'pr': 50, 'str': 'Входът е успешен. Извличане на списък с канали...'})
-
-        r_channels = self.__s.post(self.__URL_LIST, timeout=self.__t) # __URL_LIST вече е /tv/{os_id}/live
+        r_channels = self.__s.post(self.__URL_LIST, timeout=self.__t)
         self.__log_dat(r_channels); r_channels.raise_for_status()
         content_type = r_channels.headers.get('content-type', ''); match = re.search(r'charset=([^;]+)', content_type)
         self.__char_set = match.group(1) if match else 'utf-8'
@@ -268,6 +256,7 @@ class dodat():
 
   def __data_fetch(self, force_refresh):
     self.__tv_list = None; data_file_path = os.path.join(self.__path, 'data.dat')
+
     # За кеша използваме стойностите, с които реално е направена API заявката
     os_type_for_cache_check = self.__p_data['os_type'][1]
     app_version_for_cache_check = self.__p_data['app_version'][1]
@@ -367,13 +356,19 @@ class dodat():
 
       if self.__gen_m3u:
         catchup_tags = ''; stream_url = ''
-        # При новия подход (docker-bulsatcom) основно се използва 'sources'
-        stream_url = ch_info.get('sources', '')
-        url_ndvr = ch_info.get('ndvr') # ndvr се използва само за catchup-source
+        url_ndvr = ch_info.get('ndvr'); url_sources = ch_info.get('sources')
 
-        if not stream_url: # Fallback, ако 'sources' липсва
-            if isinstance(url_ndvr, str) and "wmsAuthSign=" in url_ndvr : stream_url = url_ndvr
-            else: stream_url = ch_info.get('pip', '')
+        # Приоритет на 'sources', ако има 'wmsAuthSign', както е в docker-bulsatcom за /tv/{os_id}/live
+        if isinstance(url_sources, str) and "wmsAuthSign=" in url_sources:
+            stream_url = url_sources
+        elif isinstance(url_ndvr, str) and "wmsAuthSign=" in url_ndvr: # Fallback към ndvr ако има auth
+            stream_url = url_ndvr
+        elif isinstance(url_sources, str): # Fallback към sources дори без auth
+             stream_url = url_sources
+        elif isinstance(url_ndvr, str): # Fallback към ndvr дори без auth
+             stream_url = url_ndvr
+        else: # Последен fallback към pip
+            stream_url = ch_info.get('pip', '')
 
         if not stream_url: self.__log_dat(f"Липсва URL за поток: {ch_info.get('title')}", force_log=True); continue
         self.__log_dat(f"Канал '{ch_info.get('title')}': Избран stream_url: {stream_url}", force_log=self.__DEBUG_EN)
@@ -406,12 +401,10 @@ class dodat():
         m3u_playlist_content+=f'{m3u_line_start}tvg-id="{tvg_id}" tvg-logo="{tvg_logo_val}" radio="{str(ch_info.get("radio",False)).lower()}" group-title="{group_title}",{current_title}\n'
 
         final_stream_url = stream_url
-        if session_token_for_url and self.__token_param_name: # Добавяне на ssbulsatapi токена, ако е указано
+        if session_token_for_url and self.__token_param_name:
             separator = '&' if '?' in final_stream_url else '?'
             if f"{self.__token_param_name}=" not in final_stream_url: final_stream_url += f"{separator}{self.__token_param_name}={session_token_for_url}"
 
-        # Добавяне на User-Agent към M3U URL-а, ако е указано в config.ini
-        # Използваме self.__M3U_USER_AGENT_STRING, който е оригиналният agent_id от config
         if self.__use_ua_in_m3u_url and self.__M3U_USER_AGENT_STRING:
           base_url_part = final_stream_url.split('|User-Agent=',1)[0]
           final_stream_url = f'{base_url_part}|User-Agent={urllib.parse.quote_plus(self.__M3U_USER_AGENT_STRING)}'
@@ -425,7 +418,7 @@ class dodat():
         if self.__cb: self.__cb({'str': f"M3U файлът е запазен в: {m3u_file_path}"})
       except IOError as e:
           if self.__cb: self.__cb({'str': f"Грешка запис M3U: {e}"})
-          self.__log_dat(f"Грешка запис M3U: {e}"); ret=False
+          self.__log_dat(f"Грешка запис M3U: {e}"); ret=False # Коригирано
 
     if self.__gen_epg and xml_writer is not None:
       epg_file_base = os.path.join(self.__path, 'bulsat.xml')
@@ -445,7 +438,7 @@ class dodat():
           if self.__cb: self.__cb({'str': f"EPG запазен в: {epg_file_path_final}"})
       except Exception as e:
           if self.__cb: self.__cb({'str':f"Грешка запис EPG:{e}"})
-          self.__log_dat(f"Грешка запис EPG: {e}\n{traceback.format_exc()}");ret=False
+          self.__log_dat(f"Грешка запис EPG: {e}\n{traceback.format_exc()}");ret=False # Коригирано
     elif self.__gen_epg:
         self.__log_dat("xml_writer не е инициализиран, пропускане запис EPG.", force_log=True)
 
@@ -453,3 +446,5 @@ class dodat():
       if ret: self.__cb({'pr':100,'str':'Операциите завършени успешно.'})
       else: self.__cb({'pr':100,'str':'Операциите завършени с грешки/липсващи данни.'})
     return ret
+
+```\n\nМоля, опитайте с този пълен код. Ако и след това има проблем с индентацията (което би било изключително странно, ако копирате точно), тогава проблемът може да е свързан с `nano` или с начина, по който се интерпретират интервалите/табулациите във вашата среда, или аз допускам грешка при самото генериране на този блок.", continue_working=False)
