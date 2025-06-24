@@ -9,7 +9,7 @@ import urllib.parse
 import simplejson as json
 import hashlib
 import re
-from Cryptodome.Cipher import AES
+from Cryptodome.Cipher import AES # Ще оставим Cryptodome засега, ако не работи, ще мислим за pyaes
 import io
 from . import xmltv_p3 as xmltv
 import html
@@ -25,14 +25,19 @@ class dodat():
                 cachetime=1,
                 dbg=False,
                 timeout=0.5,
-                ver = '0.0.0',
+                ver = '0.0.0', # Версия на този скрипт
                 xxx = False,
-                os_id = 'pcweb',
-                agent_id = 'pcweb',
-                app_ver = '1.0.3',
+                # Параметри, вдъхновени от docker-bulsatcom за API заявката:
+                os_id, # Това е стойността от config.ini (напр. "samsungtv", "androidtv", "pcweb")
+                       # Ще се използва за device_id, device_name, os_version, os_type в p_data
+                       # и за определяне на /tv/{os_id}/live ендпойнта.
+                agent_id, # Това е User-Agent за API заявките (подаден от main.py, напр. десктоп UA)
+                app_ver,  # Това е app_version за API заявките (подаден от main.py, напр. "0.01")
+
                 force_group_name = False,
-                use_ua = True,
-                use_rec = True,
+                use_ua = True, # Дали да се добавя User-Agent към M3U URL-ите
+                m3u_url_user_agent_string = '', # User-Agent стрингът, който да се добави към M3U URL-ите
+                use_rec = True, # Дали да се опитва да се генерира catchup инфо (зависи и от enable_catchup_info)
                 gen_m3u = True,
                 gen_epg = False,
                 compress = True,
@@ -42,41 +47,42 @@ class dodat():
                 logos_path = '',
                 use_local_logos=False,
                 logos_local_path='',
-                android_device_name='DefaultAndroidDeviceName',
+                android_device_name='DefaultAndroidDeviceName', # Вече не се използва за device_id в този подход
                 enable_catchup_info=True,
-                append_token_to_url=False,
+                append_token_to_url=False, # Дали да се добавя ssbulsatapi към stream URL
                 token_param_name='ssbulsatapi'
                 ):
 
     self.__DEBUG_EN = dbg
-    self.__log_dat(f"Инициализация на bsc.dodat с os_id (от config): {os_id}, agent_id (за M3U): {agent_id}, app_ver (от config): {app_ver}", force_log=True)
+    self.__log_dat(f"Инициализация на bsc.dodat (docker-bulsatcom стил): os_id_param: {os_id}, agent_id_for_api: {agent_id}, app_ver_for_api: {app_ver}", force_log=True)
 
     parsed_url = urllib.parse.urlparse(base)
     self.__host = parsed_url.netloc if parsed_url.netloc else 'api.iptv.bulsat.com'
 
-    self.__API_REQUEST_USER_AGENT = 'okhttp/3.12.12'
-    self.__API_REQUEST_OS_TYPE = 'androidtv'
-    self.__API_REQUEST_APP_VERSION = '1.5.20'
-    self.__API_REQUEST_DEVICE_NAME = 'unknown_google_atv'
-    self.__API_REQUEST_OS_VERSION = '7.1.2'
-    self.__API_URL_LIST = base + "/tv/full/limit"
-
-    self.__M3U_USER_AGENT = agent_id
+    self.__M3U_USER_AGENT_STRING = m3u_url_user_agent_string # User-Agent за M3U URL-ите
 
     self.__log_in = {}
     self.__p_data = {
-                'user' : [None,''], 'device_id' : [None, ''],
-                'device_name' : [None, self.__API_REQUEST_DEVICE_NAME],
-                'os_version' : [None, self.__API_REQUEST_OS_VERSION],
-                'os_type' : [None, self.__API_REQUEST_OS_TYPE],
-                'app_version' : [None, self.__API_REQUEST_APP_VERSION], 'pass' : [None,''],
+                'user' : [None, login['usr']],
+                # Използване на os_id от config.ini като стойност за тези полета, както прави docker-bulsatcom
+                'device_id' : [None, os_id],
+                'device_name' : [None, os_id],
+                'os_version' : [None, os_id], # Може да се наложи да е по-специфично, но docker-bulsatcom ползва os_id
+                'os_type' : [None, os_id],
+                'app_version' : [None, app_ver], # Трябва да е "0.01" според docker-bulsatcom
+                'pass' : [None,''], # Ще се попълни
                 }
+    self.__log_dat(f"Първоначално p_data за API заявка: {self.__p_data}", force_log=True)
+
     self.__path = path; self.__refresh = int(cachetime * 60 * 60)
-    self.__p_data['user'][1] = login['usr']; self.__log_in['pw'] = login['pass']
+    self.__log_in['pw'] = login['pass']
     self.__t = timeout; self.__BLOCK_SIZE = 16
-    self.__use_ua_in_m3u_url = use_ua; self.__use_rec_for_catchup = use_rec
-    self.__URL_EPG  = base + '/epg/long'; self.__js = None
-    self.__app_version_script = ver; self.__x = xxx
+    self.__use_ua_in_m3u_url = use_ua
+    self.__use_rec_for_catchup = use_rec
+    self.__URL_EPG  = base + '/epg/long' # docker-bulsatcom ползва /epg/short, но ще оставим long за повече данни
+    self.__js = None
+    self.__app_version_script = ver
+    self.__x = xxx
     self.__en_group_ch = force_group_name; self.__gen_m3u = gen_m3u
     self.__gen_epg = gen_epg; self.__compress = compress
     self.__cb = proc_cb; self.__MAP_URL = map_url
@@ -85,15 +91,26 @@ class dodat():
     elif logos_path: self.logos_path = logos_path + '/'
     else: self.logos_path = ''
     self.use_local_logos = use_local_logos; self.logos_local_path = logos_local_path
-    self.android_device_name = android_device_name
     self.__enable_catchup_info = enable_catchup_info
     self.__append_token_to_url = append_token_to_url
     self.__token_param_name = token_param_name
 
     self.__s = requests.Session()
-    self.__s.headers.update({'User-Agent': self.__API_REQUEST_USER_AGENT})
-    self.__log_dat(f"User-Agent на сесията е зададен на: {self.__API_REQUEST_USER_AGENT}", force_log=True)
-    self.__URL_LOGIN = base + '/?auth'
+    # User-Agent за HTTP заявките на сесията (подаден от main.py, вдъхновен от docker-bulsatcom)
+    self.__s.headers.update({'User-Agent': agent_id})
+    self.__log_dat(f"User-Agent на сесията е зададен на: {agent_id}", force_log=True)
+
+    # URL за логин - docker-bulsatcom има логика за ?auth
+    self.__URL_LOGIN = base + '/?auth' # Повечето случаи изискват ?auth
+    # Проверка дали os_id е "pcweb" (еквивалент на _os=0 в docker-bulsatcom)
+    if os_id.lower() == 'pcweb':
+        self.__URL_LOGIN = base + '/auth' # Без '?' за pcweb
+
+    # URL за списък с канали, зависи от os_id
+    self.__URL_LIST = base + '/tv/' + os_id + '/live'
+    self.__log_dat(f"URL за списък с канали: {self.__URL_LIST}", force_log=True)
+
+
     if not os.path.exists(self.__path):
       try: os.makedirs(self.__path)
       except OSError as e: print(f"Грешка при създаване на директория {self.__path}: {e}")
@@ -103,7 +120,6 @@ class dodat():
     header = '--------- BEGIN DEBUG ---------'; footer = '---------- END DEBUG ----------'
     if isinstance(d, requests.models.Response):
         print(header); print(f"URL: {d.request.url}"); print(f"Method: {d.request.method}")
-        # Избягване на json.dumps за CaseInsensitiveDict, ако причинява проблеми
         request_headers_dict = dict(d.request.headers)
         response_headers_dict = dict(d.headers)
         print(f"Request Headers: {json.dumps(request_headers_dict, indent=2, ensure_ascii=False)}")
@@ -117,10 +133,10 @@ class dodat():
     elif isinstance(d, (dict, requests.structures.CaseInsensitiveDict)):
       try: print(json.dumps(d, indent=2, ensure_ascii=False))
       except TypeError:
-          temp_dict = dict(d) # Опит за конвертиране към стандартен dict
+          temp_dict = dict(d)
           try: print(json.dumps(temp_dict, indent=2, ensure_ascii=False))
           except Exception as e_inner:
-            self.__log_dat(f"Неуспешен json.dumps дори след конвертиране към dict: {e_inner}", force_log=True)
+            print(f"Fallback log for dict (json.dumps failed): {e_inner}")
             for k, v in temp_dict.items(): print (f"  {str(k)} : {str(v)}")
     elif isinstance(d, list):
       for i, l_item in enumerate(d): print (f"  [{i}]: {l_item}")
@@ -160,35 +176,36 @@ class dodat():
       self.__log_in['key'] = r.headers['challenge']; self.__log_in['session'] = r.headers['ssbulsatapi']
       self.__s.headers.update({'SSBULSATAPI': self.__log_in['session']})
 
-      _text_pass = self.__p_data['user'][1] + ':bulcrypt:' + self.__log_in['pw']
-      _text_pass += chr(0) * (self.__BLOCK_SIZE - (len(_text_pass) % self.__BLOCK_SIZE))
-      digest_key_pass = hashlib.md5(); digest_key_pass.update('ARTS*#234S'.encode('utf-8'))
-      aes_key_pass = digest_key_pass.hexdigest().encode("utf8")
+      # Криптиране на паролата ВИНАГИ с challenge ключа (както docker-bulsatcom)
+      _text_pass = self.__log_in['pw'] + (self.__BLOCK_SIZE - len(self.__log_in['pw']) % self.__BLOCK_SIZE) * '\0'
+      aes_key_pass = self.__log_in['key'].encode("utf8") # Използваме challenge ключа
       enc_pass = AES.new(aes_key_pass, AES.MODE_ECB)
       self.__p_data['pass'][1] = base64.b64encode(enc_pass.encrypt(_text_pass.encode("utf8"))).decode('utf-8')
 
-      digest_device_id = hashlib.md5()
-      device_info_str_for_id = self.__p_data['user'][1] + self.android_device_name
-      digest_device_id.update(device_info_str_for_id.encode("utf8"))
-      generated_device_id = digest_device_id.hexdigest()[0:16]
-      self.__p_data['device_id'][1] = generated_device_id
-      self.__log_dat(f"Генериран device_id (за API заявка тип androidtv): {generated_device_id} (от user + '{self.android_device_name}')", force_log=True)
+      # device_id вече е зададен в __init__ на базата на os_id от config (напр. "samsungtv")
+      # app_version вече е зададен в __init__ на базата на app_ver от config (напр. "0.01")
+      self.__log_dat(f"Използван device_id за API заявка: {self.__p_data['device_id'][1]}", force_log=True)
+      self.__log_dat(f"Използван app_version за API заявка: {self.__p_data['app_version'][1]}", force_log=True)
 
-      self.__log_dat({"Login Data Sent to API": self.__p_data}) # Логване на __p_data преди заявката
+      self.__log_dat({"Login Data Sent to API": self.__p_data})
       if self.__cb: self.__cb({'pr': 30, 'str': 'Изпращане на данни за вход...'})
-      r = self.__s.post(self.__URL_LOGIN, timeout=self.__t, files=self.__p_data) # files=self.__p_data е важно
+      r = self.__s.post(self.__URL_LOGIN, timeout=self.__t, files=self.__p_data)
       self.__log_dat(r); r.raise_for_status(); login_response_data = r.json()
 
       if login_response_data.get('Logged') == 'true':
         self.__log_dat('Входът е успешен.', force_log=True)
         if self.__cb: self.__cb({'pr': 50, 'str': 'Входът е успешен. Извличане на списък с канали...'})
-        r_channels = self.__s.post(self.__API_URL_LIST, timeout=self.__t) # __API_URL_LIST е /tv/full/limit
+
+        r_channels = self.__s.post(self.__URL_LIST, timeout=self.__t) # __URL_LIST вече е /tv/{os_id}/live
         self.__log_dat(r_channels); r_channels.raise_for_status()
         content_type = r_channels.headers.get('content-type', ''); match = re.search(r'charset=([^;]+)', content_type)
         self.__char_set = match.group(1) if match else 'utf-8'
         self.__log_dat(f'Открито кодиране на каналите: {self.__char_set}')
         try: decoded_content = r_channels.content.decode(self.__char_set)
-        except UnicodeDecodeError: self.__log_dat(f"Грешка декодиране с {self.__char_set}, опит utf-8."); decoded_content = r_channels.content.decode('utf-8', errors='replace'); self.__char_set = 'utf-8'
+        except UnicodeDecodeError:
+            self.__log_dat(f"Грешка декодиране с {self.__char_set}, опит utf-8.")
+            decoded_content = r_channels.content.decode('utf-8', errors='replace')
+            self.__char_set = 'utf-8'
         self.__tv_list = json.loads(decoded_content); self.__js = {}
         self.__log_dat('Списъкът с канали е извлечен.', force_log=True)
         if self.__DEBUG_EN and self.__tv_list:
@@ -239,22 +256,33 @@ class dodat():
         self.__log_dat(f'LoginFail: {error_msg}', force_log=True);
         raise Exception(f"LoginFail: {error_msg}")
 
-    except requests.exceptions.HTTPError as e: self.__log_dat(f"HTTP грешка: {e}", force_log=True); raise
-    except requests.exceptions.RequestException as e: self.__log_dat(f"Грешка при мрежова заявка: {e}", force_log=True); raise
-    except Exception as e: self.__log_dat(f"Неочаквана грешка в __goforit: {e}\n{traceback.format_exc()}", force_log=True); raise
+    except requests.exceptions.HTTPError as e:
+        self.__log_dat(f"HTTP грешка: {e}", force_log=True)
+        raise
+    except requests.exceptions.RequestException as e:
+        self.__log_dat(f"Грешка при мрежова заявка: {e}", force_log=True)
+        raise
+    except Exception as e:
+        self.__log_dat(f"Неочаквана грешка в __goforit: {e}\n{traceback.format_exc()}", force_log=True)
+        raise
 
   def __data_fetch(self, force_refresh):
     self.__tv_list = None; data_file_path = os.path.join(self.__path, 'data.dat')
-    app_version_for_cache_check = self.__API_REQUEST_APP_VERSION
-    os_type_for_cache_check = self.__API_REQUEST_OS_TYPE
+    # За кеша използваме стойностите, с които реално е направена API заявката
+    os_type_for_cache_check = self.__p_data['os_type'][1]
+    app_version_for_cache_check = self.__p_data['app_version'][1]
+    device_id_for_cache_check = self.__p_data['device_id'][1]
+
     if os.path.exists(data_file_path) and not force_refresh:
       self.__restore_data()
       if self.__js and 'ts' in self.__js and 'os_type_for_request' in self.__js:
         is_cache_fresh = (time.time() - self.__js['ts']) < self.__refresh
         is_os_type_match = self.__js['os_type_for_request'] == os_type_for_cache_check
         is_app_version_match = self.__js.get('app_version_for_request') == app_version_for_cache_check
-        if is_cache_fresh and is_os_type_match and is_app_version_match:
-          self.__log_dat(f'Кешът е валиден (fresh:{is_cache_fresh}, os_match:{is_os_type_match}, app_ver_match:{is_app_version_match}).')
+        is_device_id_match = self.__js.get('device_id_for_request') == device_id_for_cache_check
+
+        if is_cache_fresh and is_os_type_match and is_app_version_match and is_device_id_match:
+          self.__log_dat(f'Кешът е валиден.')
           dump_file_path = os.path.join(self.__path, 'src.dump')
           if self.__DEBUG_EN and os.path.exists(dump_file_path):
               try:
@@ -262,22 +290,166 @@ class dodat():
                   with io.open(dump_file_path, 'r', encoding=char_set_to_use_for_dump) as f: self.__tv_list = json.load(f)
                   self.__log_dat(f"Възстановен __tv_list от src.dump (кодиране: {char_set_to_use_for_dump})")
               except Exception as e: self.__log_dat(f"Неуспешно възстановяване на __tv_list от src.dump: {e}"); self.__js = None
-          elif self.__DEBUG_EN: self.__log_dat(\"src.dump не е намерен, въпреки че дебъг е активен. Принудително обновяване.\"); self.__js = None
-          elif not self.__DEBUG_EN and self.__tv_list is None: self.__log_dat(\"Кешът (data.dat) валиден, но __tv_list не кеширан (src.dump). Обновяване.\"); self.__js = None
-        else: self.__log_dat(f'Кеш остарял/несъвместим (fresh:{is_cache_fresh}, os_match:{is_os_type_match}, app_ver_match:{is_app_version_match}).'); self.__js = None
-      else: self.__log_dat('Липсват данни в кеша или кешът е невалиден.'); self.__js = None
+          elif self.__DEBUG_EN:
+              self.__log_dat("src.dump не е намерен, въпреки че дебъг е активен. Принудително обновяване.")
+              self.__js = None
+          elif not self.__DEBUG_EN and self.__tv_list is None:
+              self.__log_dat("Кешът (data.dat) валиден, но __tv_list не кеширан (src.dump). Обновяване.")
+              self.__js = None
+        else:
+            self.__log_dat(f'Кеш остарял/несъвместим (fresh:{is_cache_fresh}, os_match:{is_os_type_match}, app_ver_match:{is_app_version_match}, device_id_match:{is_device_id_match}).')
+            self.__js = None
+      else:
+          self.__log_dat('Липсват данни в кеша или кешът е невалиден.')
+          self.__js = None
     else:
       if force_refresh: self.__log_dat('Принудително обновяване.')
       else: self.__log_dat('Липсва кеш файл.'); self.__js = None
+
     if self.__js is None:
       self.__goforit()
       if self.__tv_list is not None:
           self.__js['ts'] = time.time(); self.__js['app_version_script'] = self.__app_version_script
           self.__js['os_type_for_request'] = os_type_for_cache_check
           self.__js['app_version_for_request'] = app_version_for_cache_check
+          self.__js['device_id_for_request'] = device_id_for_cache_check
           if hasattr(self, '__char_set'): self.__js['char_set'] = self.__char_set
           self.__log_dat('Базово време на кеша: %s' % time.ctime(self.__js['ts'])); self.__store_data()
-      else: self.__log_dat(\"Неуспешно извличане данни от сървъра в __goforit.\"); return False
+      else:
+          self.__log_dat("Неуспешно извличане данни от сървъра в __goforit.")
+          return False
     return True
 
-  def gen_all(self, force_refresh = False):\n    ret = False\n    if not self.__data_fetch(force_refresh):\n        if self.__cb: self.__cb({'pr': 100, 'str': 'Грешка: Неуспешно извличане на данни за каналите.'}); return False\n    if not self.__tv_list: \n        if self.__cb: self.__cb({'pr':100, 'str': 'Грешка: Списъкът с канали е празен след опит за извличане.'}); return False\n\n    ret = True; epg_map = None; xml_writer = None \n    if self.__gen_epg:\n      char_set_for_xml = getattr(self, '__char_set', 'UTF-8').upper()\n      xml_writer = xmltv.Writer(encoding=char_set_for_xml, date=str(time.time()),\n                                source_info_url=\"https://bulsat.com\", source_info_name=\"Bulsatcom\",\n                                generator_info_name=f\"bulsat_shell_script/{self.__app_version_script}\", generator_info_url=\"\")\n      for ch_data_epg in self.__tv_list: \n          if ch_data_epg.get('epg_name') and ch_data_epg.get('title'):\n              display_names = [(ch_data_epg.get('title'), 'bg')]\n              xml_writer.addChannel({'display-name': display_names, 'id': ch_data_epg.get('epg_name'), 'url': [ch_data_epg.get('url', '')]})\n              if 'program' in ch_data_epg and isinstance(ch_data_epg['program'], list): \n                  for prog_item in ch_data_epg['program']:\n                      if not isinstance(prog_item, dict): continue \n                      prog_title = [(prog_item.get('title', 'N/A'), '')]; prog_desc = [(prog_item.get('desc', ''), '')]\n                      prog_category = [(ch_data_epg.get('genre', ''), '')]\n                      xml_writer.addProgramme({'start': prog_item.get('start', ''), 'stop': prog_item.get('stop', ''),\n                                               'title': prog_title, 'desc': prog_desc, 'category': prog_category,\n                                               'channel': ch_data_epg.get('epg_name')})\n    elif self.__MAP_URL: \n        try:\n          if self.__cb: self.__cb({'str': f\"Изтегляне на EPG карта от: {self.__MAP_URL}\"})\n          m = self.__s.get(self.__MAP_URL, timeout=self.__t); m.raise_for_status(); epg_map = m.json()\n          self.__log_dat(epg_map);\n          if self.__cb: self.__cb({'str': \"EPG картата е изтеглена успешно.\"})\n        except Exception as e:\n          if self.__cb: self.__cb({'str': f\"Грешка при изтегляне/парсване EPG карта: {e}\"}); self.__log_dat(f\"Грешка изтегляне/парсване EPG карта: {e}\")\n\n    m3u_playlist_content = u'#EXTM3U\\n'; total_channels = len(self.__tv_list)\n    session_token_for_url = self.__log_in.get('session') if self.__append_token_to_url else None\n\n    for i, ch_info in enumerate(self.__tv_list):\n      if self.__cb:\n        progress_percent = int((i*100)/total_channels) if total_channels > 0 else 0\n        ch_title_prog = ch_info.get('title', ch_info.get('epg_name', 'N/A'))\n        self.__cb({'pr': progress_percent, 'str': f'Обработка: {ch_title_prog}', 'idx': i+1, 'max': total_channels})\n      group_title = self.__en_group_ch if self.__en_group_ch else ch_info.get('genre', 'Undefined')\n      if not self.__x and group_title == '18+': continue\n\n      if self.__gen_m3u:\n        catchup_tags = ''; stream_url = ''\n        url_ndvr = ch_info.get('ndvr'); url_sources = ch_info.get('sources')\n        if isinstance(url_ndvr, str) and \"?DVR&\" in url_ndvr and \"wmsAuthSign=\" in url_ndvr: stream_url = url_ndvr\n        elif isinstance(url_sources, str) and \"wmsAuthSign=\" in url_sources: stream_url = url_sources\n        elif isinstance(url_ndvr, str): stream_url = url_ndvr\n        else: stream_url = ch_info.get('pip', '')\n        if not stream_url: self.__log_dat(f\"Липсва URL за поток: {ch_info.get('title')}\", force_log=True); continue\n        self.__log_dat(f\"Канал '{ch_info.get('title')}': Избран stream_url: {stream_url}\", force_log=self.__DEBUG_EN)\n\n        if self.__enable_catchup_info and self.__use_rec_for_catchup and isinstance(url_ndvr, str) and url_ndvr:\n          parsed_original_ndvr = urllib.parse.urlparse(url_ndvr)\n          path_for_catchup = parsed_original_ndvr.path; query_for_catchup = parsed_original_ndvr.query\n          wowza_params = \"wowzadvrplayliststart={utc:YmdHMS}&wowzadvrplaylistduration={duration}000\"\n          final_catchup_url = f\"{recURL}{path_for_catchup}\"\n          if query_for_catchup: final_catchup_url += f\"?{query_for_catchup}&{wowza_params}\"\n          else: final_catchup_url += f\"?{wowza_params}\"\n          catchup_tags = f'catchup=\"default\" catchup-source=\"{final_catchup_url}\"'\n        \n        current_title = ch_info.get('title', 'No Title')\n        m3u_line_start = f'#EXTINF:-1 {catchup_tags} ' if catchup_tags else f'#EXTINF:-1 '\n        tvg_id = ch_info.get('epg_name', '')\n        tvg_logo_val = ch_info.get('logo', ch_info.get('logo_selected', ch_info.get('logo_favorite', '')))\n        if self.use_ext_logos:\n            logo_filename = f\"{tvg_id}.png\"\n            if self.use_local_logos and self.logos_local_path: tvg_logo_val = os.path.join(self.logos_local_path, logo_filename)\n            elif self.logos_path: tvg_logo_val = urllib.parse.urljoin(self.logos_path, logo_filename)\n        elif epg_map and tvg_id in epg_map: \n            map_entry = epg_map[tvg_id]; tvg_id_from_map = map_entry.get('id', tvg_id)\n            logo_from_map = map_entry.get('ch_logo')\n            if logo_from_map : tvg_logo_val = logo_from_map\n            tvg_id = tvg_id_from_map \n        self.__log_dat(f\"Канал '{current_title}', tvg-id:'{tvg_id}', лого:'{tvg_logo_val}'\", force_log=self.__DEBUG_EN)\n        m3u_playlist_content+=f'{m3u_line_start}tvg-id=\"{tvg_id}\" tvg-logo=\"{tvg_logo_val}\" radio=\"{str(ch_info.get(\"radio\",False)).lower()}\" group-title=\"{group_title}\",{current_title}\\n'\n        final_stream_url = stream_url\n        if session_token_for_url and self.__token_param_name:\n            separator = '&' if '?' in final_stream_url else '?'\n            if f\"{self.__token_param_name}=\" not in final_stream_url: final_stream_url += f\"{separator}{self.__token_param_name}={session_token_for_url}\"\n        if self.__use_ua_in_m3u_url and self.__M3U_USER_AGENT: \n          base_url_part = final_stream_url.split('|User-Agent=',1)[0]\n          final_stream_url = f'{base_url_part}|User-Agent={urllib.parse.quote_plus(self.__M3U_USER_AGENT)}'\n        m3u_playlist_content += f'{final_stream_url}\\n'\n\n    if self.__gen_m3u:\n      m3u_file_path = os.path.join(self.__path, 'bulsat.m3u')\n      try:\n        with open(m3u_file_path, 'wb+') as f_m3u: f_m3u.write(m3u_playlist_content.encode(getattr(self,'__char_set','utf-8'),'replace'))\n        if self.__cb: self.__cb({'str': f\"M3U файлът е запазен в: {m3u_file_path}\"})\n      except IOError as e: \n          if self.__cb: self.__cb({'str': f\"Грешка запис M3U: {e}\"})\n          self.__log_dat(f\"Грешка запис M3U: {e}\"); ret=False\n          \n    if self.__gen_epg and xml_writer is not None: \n      epg_file_base = os.path.join(self.__path, 'bulsat.xml')\n      try:\n        if self.__compress:\n          epg_file_path_final = epg_file_base + '.gz'\n          with io.BytesIO() as temp_buffer: xml_writer.write(temp_buffer, pretty_print=True); temp_buffer.seek(0)\n          with gzip.open(epg_file_path_final, 'wb', 9) as f_xml_gz: f_xml_gz.write(temp_buffer.read())\n          if self.__cb: self.__cb({'str': f\"EPG компресиран в: {epg_file_path_final}\"})\n        else:\n          epg_file_path_final = epg_file_base\n          with open(epg_file_path_final, 'wb+') as f_xml: xml_writer.write(f_xml, pretty_print=True)\n          if self.__cb: self.__cb({'str': f\"EPG запазен в: {epg_file_path_final}\"})\n      except Exception as e: \n          if self.__cb: self.__cb({'str':f\"Грешка запис EPG:{e}\"})\n          self.__log_dat(f\"Грешка запис EPG: {e}\\n{traceback.format_exc()}\");ret=False # Добавяне на traceback\n    elif self.__gen_epg: self.__log_dat(\"xml_writer не е инициализиран, пропускане запис EPG.\", force_log=True)\n    \n    if self.__cb:\n      if ret: self.__cb({'pr':100,'str':'Операциите завършени успешно.'})\n      else: self.__cb({'pr':100,'str':'Операциите завършени с грешки/липсващи данни.'})\n    return ret\n\n```\n\nСлед като замените съдържанието, моля, запазете файла и опитайте `python3 main.py` отново. Надявам се този път грешката с индентацията да е окончателно отстранена.", continue_working=False)
+  def gen_all(self, force_refresh = False):
+    ret = False
+    if not self.__data_fetch(force_refresh):
+        if self.__cb: self.__cb({'pr': 100, 'str': 'Грешка: Неуспешно извличане на данни за каналите.'}); return False
+    if not self.__tv_list:
+        if self.__cb: self.__cb({'pr':100, 'str': 'Грешка: Списъкът с канали е празен след опит за извличане.'}); return False
+
+    ret = True; epg_map = None; xml_writer = None
+    if self.__gen_epg:
+      char_set_for_xml = getattr(self, '__char_set', 'UTF-8').upper()
+      xml_writer = xmltv.Writer(encoding=char_set_for_xml, date=str(time.time()),
+                                source_info_url="https://bulsat.com", source_info_name="Bulsatcom",
+                                generator_info_name=f"bulsat_shell_script/{self.__app_version_script}", generator_info_url="")
+      for ch_data_epg in self.__tv_list:
+          if ch_data_epg.get('epg_name') and ch_data_epg.get('title'):
+              display_names = [(ch_data_epg.get('title'), 'bg')]
+              xml_writer.addChannel({'display-name': display_names, 'id': ch_data_epg.get('epg_name'), 'url': [ch_data_epg.get('url', '')]})
+              if 'program' in ch_data_epg and isinstance(ch_data_epg['program'], list):
+                  for prog_item in ch_data_epg['program']:
+                      if not isinstance(prog_item, dict): continue
+                      prog_title = [(prog_item.get('title', 'N/A'), '')]; prog_desc = [(prog_item.get('desc', ''), '')]
+                      prog_category = [(ch_data_epg.get('genre', ''), '')]
+                      xml_writer.addProgramme({'start': prog_item.get('start', ''), 'stop': prog_item.get('stop', ''),
+                                               'title': prog_title, 'desc': prog_desc, 'category': prog_category,
+                                               'channel': ch_data_epg.get('epg_name')})
+    elif self.__MAP_URL:
+        try:
+          if self.__cb: self.__cb({'str': f"Изтегляне на EPG карта от: {self.__MAP_URL}"})
+          m = self.__s.get(self.__MAP_URL, timeout=self.__t); m.raise_for_status(); epg_map = m.json()
+          self.__log_dat(epg_map);
+          if self.__cb: self.__cb({'str': "EPG картата е изтеглена успешно."})
+        except Exception as e:
+          if self.__cb: self.__cb({'str': f"Грешка при изтегляне/парсване EPG карта: {e}"}); self.__log_dat(f"Грешка изтегляне/парсване EPG карта: {e}")
+
+    m3u_playlist_content = u'#EXTM3U\n'; total_channels = len(self.__tv_list)
+    session_token_for_url = self.__log_in.get('session') if self.__append_token_to_url else None
+
+    for i, ch_info in enumerate(self.__tv_list):
+      if self.__cb:
+        progress_percent = int((i*100)/total_channels) if total_channels > 0 else 0
+        ch_title_prog = ch_info.get('title', ch_info.get('epg_name', 'N/A'))
+        self.__cb({'pr': progress_percent, 'str': f'Обработка: {ch_title_prog}', 'idx': i+1, 'max': total_channels})
+      group_title = self.__en_group_ch if self.__en_group_ch else ch_info.get('genre', 'Undefined')
+      if not self.__x and group_title == '18+': continue
+
+      if self.__gen_m3u:
+        catchup_tags = ''; stream_url = ''
+        # При новия подход (docker-bulsatcom) основно се използва 'sources'
+        stream_url = ch_info.get('sources', '')
+        url_ndvr = ch_info.get('ndvr') # ndvr се използва само за catchup-source
+
+        if not stream_url: # Fallback, ако 'sources' липсва
+            if isinstance(url_ndvr, str) and "wmsAuthSign=" in url_ndvr : stream_url = url_ndvr
+            else: stream_url = ch_info.get('pip', '')
+
+        if not stream_url: self.__log_dat(f"Липсва URL за поток: {ch_info.get('title')}", force_log=True); continue
+        self.__log_dat(f"Канал '{ch_info.get('title')}': Избран stream_url: {stream_url}", force_log=self.__DEBUG_EN)
+
+        if self.__enable_catchup_info and self.__use_rec_for_catchup and isinstance(url_ndvr, str) and url_ndvr:
+          parsed_original_ndvr = urllib.parse.urlparse(url_ndvr)
+          path_for_catchup = parsed_original_ndvr.path; query_for_catchup = parsed_original_ndvr.query
+          wowza_params = "wowzadvrplayliststart={utc:YmdHMS}&wowzadvrplaylistduration={duration}000"
+          final_catchup_url = f"{recURL}{path_for_catchup}" # recURL е lb-ndvr...
+          if query_for_catchup: final_catchup_url += f"?{query_for_catchup}&{wowza_params}"
+          else: final_catchup_url += f"?{wowza_params}"
+          catchup_tags = f'catchup="default" catchup-source="{final_catchup_url}"'
+
+        current_title = ch_info.get('title', 'No Title')
+        m3u_line_start = f'#EXTINF:-1 {catchup_tags} ' if catchup_tags else f'#EXTINF:-1 '
+        tvg_id = ch_info.get('epg_name', '')
+        tvg_logo_val = ch_info.get('logo', ch_info.get('logo_selected', ch_info.get('logo_favorite', '')))
+
+        if self.use_ext_logos:
+            logo_filename = f"{tvg_id}.png"
+            if self.use_local_logos and self.logos_local_path: tvg_logo_val = os.path.join(self.logos_local_path, logo_filename)
+            elif self.logos_path: tvg_logo_val = urllib.parse.urljoin(self.logos_path, logo_filename)
+        elif epg_map and tvg_id in epg_map:
+            map_entry = epg_map[tvg_id]; tvg_id_from_map = map_entry.get('id', tvg_id)
+            logo_from_map = map_entry.get('ch_logo')
+            if logo_from_map : tvg_logo_val = logo_from_map
+            tvg_id = tvg_id_from_map
+
+        self.__log_dat(f"Канал '{current_title}', tvg-id:'{tvg_id}', лого:'{tvg_logo_val}'", force_log=self.__DEBUG_EN)
+        m3u_playlist_content+=f'{m3u_line_start}tvg-id="{tvg_id}" tvg-logo="{tvg_logo_val}" radio="{str(ch_info.get("radio",False)).lower()}" group-title="{group_title}",{current_title}\n'
+
+        final_stream_url = stream_url
+        if session_token_for_url and self.__token_param_name: # Добавяне на ssbulsatapi токена, ако е указано
+            separator = '&' if '?' in final_stream_url else '?'
+            if f"{self.__token_param_name}=" not in final_stream_url: final_stream_url += f"{separator}{self.__token_param_name}={session_token_for_url}"
+
+        # Добавяне на User-Agent към M3U URL-а, ако е указано в config.ini
+        # Използваме self.__M3U_USER_AGENT_STRING, който е оригиналният agent_id от config
+        if self.__use_ua_in_m3u_url and self.__M3U_USER_AGENT_STRING:
+          base_url_part = final_stream_url.split('|User-Agent=',1)[0]
+          final_stream_url = f'{base_url_part}|User-Agent={urllib.parse.quote_plus(self.__M3U_USER_AGENT_STRING)}'
+
+        m3u_playlist_content += f'{final_stream_url}\n'
+
+    if self.__gen_m3u:
+      m3u_file_path = os.path.join(self.__path, 'bulsat.m3u')
+      try:
+        with open(m3u_file_path, 'wb+') as f_m3u: f_m3u.write(m3u_playlist_content.encode(getattr(self,'__char_set','utf-8'),'replace'))
+        if self.__cb: self.__cb({'str': f"M3U файлът е запазен в: {m3u_file_path}"})
+      except IOError as e:
+          if self.__cb: self.__cb({'str': f"Грешка запис M3U: {e}"})
+          self.__log_dat(f"Грешка запис M3U: {e}"); ret=False
+
+    if self.__gen_epg and xml_writer is not None:
+      epg_file_base = os.path.join(self.__path, 'bulsat.xml')
+      try:
+        if self.__compress:
+          epg_file_path_final = epg_file_base + '.gz'
+          buffer_for_gzip = io.BytesIO()
+          xml_writer.write(buffer_for_gzip, pretty_print=True)
+          buffer_for_gzip.seek(0)
+          with gzip.open(epg_file_path_final, 'wb', 9) as f_xml_gz:
+              f_xml_gz.write(buffer_for_gzip.read())
+          buffer_for_gzip.close()
+          if self.__cb: self.__cb({'str': f"EPG компресиран в: {epg_file_path_final}"})
+        else:
+          epg_file_path_final = epg_file_base
+          with open(epg_file_path_final, 'wb+') as f_xml: xml_writer.write(f_xml, pretty_print=True)
+          if self.__cb: self.__cb({'str': f"EPG запазен в: {epg_file_path_final}"})
+      except Exception as e:
+          if self.__cb: self.__cb({'str':f"Грешка запис EPG:{e}"})
+          self.__log_dat(f"Грешка запис EPG: {e}\n{traceback.format_exc()}");ret=False
+    elif self.__gen_epg:
+        self.__log_dat("xml_writer не е инициализиран, пропускане запис EPG.", force_log=True)
+
+    if self.__cb:
+      if ret: self.__cb({'pr':100,'str':'Операциите завършени успешно.'})
+      else: self.__cb({'pr':100,'str':'Операциите завършени с грешки/липсващи данни.'})
+    return ret

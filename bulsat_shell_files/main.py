@@ -3,26 +3,24 @@ import configparser
 import os
 import time
 import sys
-from lib import bsc # Assuming bsc.py will be in a 'lib' subdirectory
+from lib import bsc
 
-# --- Global UA and OS settings ---
-# These were originally in exec.py and bsc.py, consolidating them here for clarity
-# The os_id from config.ini will determine which of these is used.
-UA_OS_SETTINGS = {
-    'samsungtv': {
-        'ua': 'Mozilla/5.0 (SMART-TV; Linux; Tizen 2.3) AppleWebkit/538.1 (KHTML, like Gecko) SamsungBrowser/1.0 TV Safari/538.1',
-        'osid': 'samsungtv',
-        # 'app_ver': '1.0.3' # App version will be read from config
-    },
-    'androidtv': {
-        'ua': 'okhttp/3.12.12',
-        'osid': 'androidtv',
-        # 'app_ver': '1.5.20' # App version will be read from config
-    }
+# --- User-Agent, който ще се използва за API заявките (вдъхновен от docker-bulsatcom) ---
+# Този User-Agent ще се използва за самата комуникация със сървъра на Булсатком.
+# User-Agent-ът, който евентуално се добавя към M3U URL-ите, ще дойде от os_id настройката.
+API_REQUEST_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/61.0.3163.100 Safari/537.36'
+# Твърдо кодирана app_version за API заявките, както е в docker-bulsatcom
+API_REQUEST_APP_VERSION = '0.01'
+
+# --- Настройки за User-Agent, който да се добави към M3U URL-ите (ако use_ua_in_m3u е true) ---
+# Тези са базирани на оригиналния os_id от config.ini
+M3U_URL_USER_AGENTS = {
+    'samsungtv': 'Mozilla/5.0 (SMART-TV; Linux; Tizen 2.3) AppleWebkit/538.1 (KHTML, like Gecko) SamsungBrowser/1.0 TV Safari/538.1',
+    'androidtv': 'okhttp/3.12.12',
+    'pcweb': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/61.0.3163.100 Safari/537.36' # Пример за pcweb
 }
 
 def get_config():
-    """Reads configuration from config.ini"""
     config = configparser.ConfigParser()
     if not os.path.exists('config.ini'):
         print("Грешка: Файлът config.ini не е намерен. Моля, създайте го.")
@@ -34,165 +32,135 @@ def get_config():
     return config['bulsat']
 
 def progress_callback_shell(progress_info):
-    """Basic progress callback for shell environment."""
     message = progress_info.get('str', '')
     percentage = progress_info.get('pr', None)
     idx = progress_info.get('idx', None)
     max_val = progress_info.get('max', None)
-
     if percentage is not None:
         progress_bar = f"[{'=' * int(percentage / 10)}{' ' * (10 - int(percentage / 10))}] {percentage}%"
-        if idx and max_val:
-            print(f"{progress_bar} - {message} ({idx}/{max_val})")
-        else:
-            print(f"{progress_bar} - {message}")
-    else:
-        print(message)
+        if idx and max_val: print(f"{progress_bar} - {message} ({idx}/{max_val})")
+        else: print(f"{progress_bar} - {message}")
+    else: print(message)
 
 def main():
     cfg = get_config()
 
-    username = cfg.get('username', 'your_username')
-    password = cfg.get('password', 'your_password')
+    username = cfg.get('username', '')
+    password = cfg.get('password', '')
     save_dir = cfg.get('save_dir', './output')
     debug_mode = cfg.getboolean('debug', False)
     cache_time_min = cfg.getint('cache_time', 240)
     time_out_sec = cfg.getfloat('time_out', 10)
-    os_id_key = cfg.get('os_id', 'samsungtv').lower()
-    app_version_cfg = cfg.get('app_version') # Will be used by bsc.py
+
+    # os_id от config ще се използва за избор на ендпойнт (/tv/samsungtv/live или /tv/androidtv/live)
+    # и за User-Agent-а, който се добавя към M3U URL-ите.
+    # За самата API заявка към Булсатком, bsc.py ще използва твърдо кодирани стойности,
+    # вдъхновени от docker-bulsatcom (десктоп User-Agent, app_version "0.01", device_id = os_id_str).
+    os_id_str = cfg.get('os_id', 'samsungtv').lower()
+
+    # app_version от config.ini вече не се използва за API заявката, тъй като bsc.py ще ползва "0.01"
+    # cfg.get('app_version') # Запазваме го, ако решим да го ползваме за нещо друго
+
     base_url = cfg.get('base_url', 'https://api.iptv.bulsat.com')
-    android_friendly_name = cfg.get('android_friendly_name', 'DefaultAndroidDevice')
+    # android_friendly_name вече не е нужен за генериране на device_id по новия метод,
+    # но го оставяме за момента, ако потребителят го е задал. bsc.py ще го игнорира.
+    # cfg.get('android_friendly_name', 'DefaultAndroidDevice')
+
     enable_catchup_config = cfg.getboolean('enable_catchup', True)
     append_token_to_url_config = cfg.getboolean('append_token_to_stream_url', False)
     token_param_name_config = cfg.get('stream_url_token_param_name', 'ssbulsatapi')
 
+    # Нова опция: Дали да се добавя |User-Agent= към M3U URL-ите
+    # По подразбиране ще е false, тъй като docker-bulsatcom не го прави.
+    use_ua_in_m3u_url_config = cfg.getboolean('use_user_agent_in_m3u_url', False)
 
-    if username == 'your_username' or password == 'your_password':
+    if not username or not password:
         print("Моля, въведете вашето потребителско име и парола в config.ini")
         sys.exit(1)
 
-    if os_id_key not in UA_OS_SETTINGS:
-        print(f"Грешка: Невалидна стойност за 'os_id' в config.ini. Трябва да е една от {list(UA_OS_SETTINGS.keys())}")
+    if os_id_str not in M3U_URL_USER_AGENTS: # Проверка дали os_id_str е валиден ключ
+        print(f"Грешка: Невалидна стойност за 'os_id' в config.ini: '{os_id_str}'. Трябва да е една от {list(M3U_URL_USER_AGENTS.keys())}")
         sys.exit(1)
 
-    selected_os_settings = UA_OS_SETTINGS[os_id_key]
-    user_agent = cfg.get('user_agent', selected_os_settings['ua'])
+    # User-Agent, който ще се добави към M3U URL-ите (ако use_ua_in_m3u_url_config е True)
+    m3u_url_user_agent_to_pass = M3U_URL_USER_AGENTS[os_id_str]
 
-    # Ensure save_dir exists
     if not os.path.exists(save_dir):
-        try:
-            os.makedirs(save_dir)
-            print(f"Създадена е директория: {save_dir}")
-        except OSError as e:
-            print(f"Грешка при създаване на директория {save_dir}: {e}")
-            sys.exit(1)
+        try: os.makedirs(save_dir)
+        except OSError as e: print(f"Грешка при създаване на директория {save_dir}: {e}"); sys.exit(1)
 
-    # The bsc.dodat class will expect app_ver for the specific os_id
-    # It's better to pass it directly, or let bsc.py handle default if not provided.
-    # For now, we pass the one from config.
-    if not app_version_cfg:
-        print(f"Предупреждение: 'app_version' не е зададена в config.ini. bsc.py може да използва стойност по подразбиране.")
-
-
-    print(f"Използване на OS ID: {selected_os_settings['osid']}")
-    print(f"User Agent: {user_agent}")
-    print(f"App Version (от config): {app_version_cfg}")
+    print(f"Използване на os_id (за ендпойнт и M3U User-Agent): {os_id_str}")
+    print(f"User-Agent за API заявки (твърдо кодиран в bsc.py): {API_REQUEST_USER_AGENT}")
+    print(f"App Version за API заявки (твърдо кодирана в bsc.py): {API_REQUEST_APP_VERSION}")
+    print(f"User-Agent за M3U URL-и (ако е активна опцията): {m3u_url_user_agent_to_pass}")
     print(f"Директория за запис: {os.path.abspath(save_dir)}")
-    print(f"Време за кеширане: {cache_time_min} минути")
-
-    # --- Initialize bsc.dodat ---
-    # Parameters for bsc.dodat need to be mapped from our config
-    # Original exec.py call:
-    # b = bsc.dodat(base = __addon__.getSetting('base'), # base_url from config
-    #               login = {'usr': usern, 'pass': passn},
-    #               path = __data__, # save_dir from config (for data.dat, etc.)
-    #               cachetime = float(__addon__.getSetting('refresh_new')), # cache_time_min from config
-    #               dbg = dbg, # debug_mode from config
-    #               timeout = float(__addon__.getSetting('timeout')), # time_out_sec from config
-    #               ver = __version__, # Script version, can be hardcoded or omitted
-    #               xxx = xxx, # Not implemented, assume False
-    #               use_ua = use_ua, # True by default in this script
-    #               use_rec = use_rec, # True by default if androidtv, needs confirmation
-    #               os_id = __ua_os[temp_osid]['osid'], # selected_os_settings['osid']
-    #               agent_id = __ua_os[temp_osid]['ua'], # user_agent
-    #               app_ver = __addon__.getSetting('app_ver'), # app_version_cfg from config
-    #               force_group_name = _group_name, # False by default
-    #               gen_m3u = True, # True by default
-    #               gen_epg = not etx_epg, # True by default (etx_epg=False)
-    #               compress = True, # True by default
-    #               map_url = map_url, # None by default
-    #               proc_cb = progress_cb, # progress_callback_shell
-    #               use_ext_logos = use_ext_logos, # False
-    #               logos_path = logos_path, # ''
-    #               use_local_logos = use_local_logos, # False
-    #               logos_local_path = logos_local_path) # ''
-    #               android_device_name is a new param for password encryption
 
     try:
         bulsat_client = bsc.dodat(
             base=base_url,
             login={'usr': username, 'pass': password},
-            path=save_dir,  # This path is where bsc.py might store its own cache like 'data.dat'
-            cachetime=float(cache_time_min / 60), # bsc.py expects hours for cachetime
+            path=save_dir,
+            cachetime=float(cache_time_min / 60),
             dbg=debug_mode,
             timeout=time_out_sec,
-            ver="1.0.0-shell", # Script version
-            xxx=False, # Not exposing this in config for now
-            os_id=selected_os_settings['osid'],
-            agent_id=user_agent,
-            app_ver=app_version_cfg, # Pass the version from config
-            force_group_name=False, # Not exposing this
-            use_ua=True, # Always use UA string for requests
-            use_rec=True if selected_os_settings['osid'] == 'androidtv' else False, # Based on original logic for use_rec
+            ver="2.0.0-docker-bulsatcom-inspired",
+            xxx=False,
+            # Тези параметри се подават към bsc.py, който ще ги използва по новия начин:
+            os_id=os_id_str,  # Ще се използва за избор на ендпойнт /tv/{os_id}/live и като device_id
+            agent_id=API_REQUEST_USER_AGENT, # User-Agent за API заявките
+            app_ver=API_REQUEST_APP_VERSION,   # app_version "0.01" за API заявките
+
+            force_group_name=False,
+            use_ua=use_ua_in_m3u_url_config, # Дали да се добавя User-Agent към M3U URL-ите
+            # use_rec се базира на оригиналния os_id (androidtv имаше use_rec=true)
+            # За новия подход, може би трябва да е винаги false, или да зависи от това дали API-то връща ndvr
+            use_rec=True if os_id_str == 'androidtv' else False, # Запазваме старата логика за use_rec, но тя може да не е релевантна
+                                                                # ако API-то за samsungtv/pcweb не връща ndvr инфо по същия начин.
+                                                                # docker-bulsatcom не изглежда да има сложна catchup логика.
             gen_m3u=True,
-            gen_epg=True,
+            gen_epg=cfg.getboolean('generate_epg', True), # Четене от config
             compress=True,
-            map_url=None, # Not exposing this
+            map_url=None,
             proc_cb=progress_callback_shell,
-            use_ext_logos=False, # Not exposing this
-            logos_path='', # Not exposing this
-            use_local_logos=False, # Not exposing this
-            logos_local_path='', # Not exposing this
-            android_device_name=android_friendly_name, # For password encryption if os_id is androidtv
-            enable_catchup_info=enable_catchup_config, # New parameter for catchup
+            use_ext_logos=cfg.getboolean('use_ext_logos', False), # Четене от config
+            logos_path=cfg.get('logos_path', ''), # Четене от config
+            use_local_logos=cfg.getboolean('use_local_logos', False), # Четене от config
+            logos_local_path=cfg.get('logos_local_path', ''), # Четене от config
+            # android_friendly_name се подава, но bsc.py (в новата логика) няма да го ползва за device_id
+            android_device_name=cfg.get('android_friendly_name', 'DefaultAndroidDevice'),
+            enable_catchup_info=enable_catchup_config,
             append_token_to_url=append_token_to_url_config,
-            token_param_name=token_param_name_config
+            token_param_name=token_param_name_config,
+            # Нов параметър, за да знае bsc.py кой User-Agent да сложи в M3U URL-ите
+            m3u_url_user_agent_string=m3u_url_user_agent_to_pass
         )
 
         while True:
             print("\nЗапочва генериране на файлове...")
-            force_refresh = True # Always refresh on the first run of the loop or manual trigger
-            # Subsequent runs within the cache time might not need full refresh if bsc.py handles it well.
-            # For now, let's assume gen_all will internally check its cache unless forced.
-            # The original exec.py logic implies 'force=True' on manual runs.
-
-            success = bulsat_client.gen_all(force_refresh=force_refresh)
+            success = bulsat_client.gen_all(force_refresh=True)
 
             if success:
                 print("Файловете са генерирани успешно.")
                 m3u_path = os.path.join(save_dir, 'bulsat.m3u')
-                epg_path = os.path.join(save_dir, 'bulsat.xml.gz')
+                epg_path = os.path.join(save_dir, 'bulsat.xml.gz' if cfg.getboolean('generate_epg', True) and True else 'bulsat.xml') # compress е True по подразбиране в bsc
                 print(f"M3U файл: {os.path.abspath(m3u_path)}")
-                print(f"EPG файл: {os.path.abspath(epg_path)}")
+                if cfg.getboolean('generate_epg', True): print(f"EPG файл: {os.path.abspath(epg_path)}")
             else:
                 print("Грешка при генериране на файловете.")
 
             print(f"\nИзчакване {cache_time_min} минути преди следващото обновяване...")
-            print(f"Натиснете Ctrl+C за изход.")
+            print("Натиснете Ctrl+C за изход.")
             try:
                 time.sleep(cache_time_min * 60)
             except KeyboardInterrupt:
-                print("\nИзлизане...")
-                break
+                print("\nИзлизане..."); break
 
     except Exception as e:
-        print(f"Възникна неочаквана грешка: {e}")
-        import traceback
+        print(f"Възникна неочаквана грешка в main: {e}")
         traceback.print_exc()
         sys.exit(1)
 
 if __name__ == '__main__':
-    # Create lib directory if it doesn't exist, for bsc.py etc.
     if not os.path.exists('lib'):
         os.makedirs('lib')
     main()
